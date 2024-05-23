@@ -40,7 +40,7 @@ Pillow，opencv-python，numpy，imagehash,python-pptx
 python ppt.py frames output_presentation.pptx
 ```
 这里的frames为图片文件夹路径，默认为frames，output_presentation.pptx可替换为生成PPT的路径
-
+如果使用的是进阶版本，请注意将文件夹路径替换为Cropped-frames的路径
 ### 参数（可对应再main函数中修改）
 ```shell
 second: 提取视频帧的间隔 可根据视频长度以及演讲者翻页速度酌情修改
