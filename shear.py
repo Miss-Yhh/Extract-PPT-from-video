@@ -1,30 +1,84 @@
 import cv2
 import os
+import argparse
 import numpy as np
+from PIL import Image
+import imagehash
+from pptx import Presentation
+from pptx.util import Inches
+
+def extract_frames(video_path, output_folder, interval_sec=1.5):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    interval = int(fps * interval_sec)
+
+    frame_count = 0
+    saved_count = 0
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        if frame_count % interval == 0:
+            frame_filename = os.path.join(output_folder, f"frame_{saved_count}.jpg")
+            cv2.imwrite(frame_filename, frame)
+            saved_count += 1
+
+        frame_count += 1
+
+    cap.release()
+
+def find_similar_images_and_rename(folder, threshold=5):
+    image_hashes = []
+    files_to_keep = []
+
+    for filename in os.listdir(folder):
+        if filename.endswith(".jpg"):
+            filepath = os.path.join(folder, filename)
+            image = Image.open(filepath)
+            image_hash = imagehash.average_hash(image)
+
+            is_similar = False
+            for existing_hash in image_hashes:
+                if image_hash - existing_hash <= threshold:
+                    is_similar = True
+                    break
+
+            if not is_similar:
+                image_hashes.append(image_hash)
+                files_to_keep.append(filepath)
+
+    for filename in os.listdir(folder):
+        if filename.endswith(".jpg"):
+            filepath = os.path.join(folder, filename)
+            if filepath not in files_to_keep:
+                os.remove(filepath)
+
+    remaining_files = sorted([f for f in os.listdir(folder) if f.endswith(".jpg") and '_' in f and f.split('_')[1].split('.')[0].isdigit()], key=lambda x: int(x.split('_')[1].split('.')[0]))
+    for i, filename in enumerate(remaining_files, start=1):
+        file_extension = os.path.splitext(filename)[1]
+        new_filename = f"{i}{file_extension}"
+        old_filepath = os.path.join(folder, filename)
+        new_filepath = os.path.join(folder, new_filename)
+        os.rename(old_filepath, new_filepath)
 
 def extract_ppt_from_image(image, output_path):
-    # 将图像转换为灰度图
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-    # 应用高斯模糊以去除噪声
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    # 使用Canny边缘检测
     edged = cv2.Canny(blurred, 50, 150)
-
-    # 查找轮廓
     contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # 初始化最大矩形区域
     max_rect = None
     max_area = 0
 
     for contour in contours:
-        # 计算轮廓的边界矩形
         (x, y, w, h) = cv2.boundingRect(contour)
         area = w * h
 
-        # 找到面积最大的矩形
         if area > max_area:
             max_area = area
             max_rect = (x, y, w, h)
@@ -52,12 +106,6 @@ def process_images_in_folder(input_folder, output_folder):
             else:
                 print(f"无法读取图片: {filename}")
 
-# 使用示例
-input_folder = "frames"  # 替换成你的图片文件夹路径
-output_folder = "largest-images"  # 替换成你希望保存图片的文件夹路径
-
-process_images_in_folder(input_folder, output_folder)
-
 def find_largest_image(input_folder, output_path):
     max_area = 0
     largest_image = None
@@ -84,11 +132,6 @@ def find_largest_image(input_folder, output_path):
     else:
         print("未找到任何图片")
 
-# 使用示例
-input_folder = "largest-images" # 替换成你的图片文件夹路径
-output_path = "output_largest_image.jpg"  # 替换成你希望保存最大图片的路径
-
-find_largest_image(input_folder, output_path)
 def find_template_in_image(image, template):
     result = cv2.matchTemplate(image, template, cv2.TM_CCOEFF_NORMED)
     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
@@ -98,7 +141,6 @@ def find_template_in_image(image, template):
     return top_left, bottom_right
 
 def crop_images_to_template(input_folder, template_path, output_folder):
-    # 读取模板图像
     template = cv2.imread(template_path)
     if template is None:
         print("无法读取模板图片")
@@ -121,9 +163,37 @@ def crop_images_to_template(input_folder, template_path, output_folder):
             else:
                 print(f"无法读取图片: {filename}")
 
-# 使用示例
-input_folder = "frames"  # 替换成你的图片文件夹路径
-template_path = "output_largest_image.jpg"  # 替换成你的模板图片路径
-output_folder = "Cropped-frames"  # 替换成你希望保存裁剪图片的文件夹路径
+def images_to_ppt(image_folder, output_ppt):
+    presentation = Presentation()
+    image_files = sorted([f for f in os.listdir(image_folder) if f.endswith((".jpg", ".png", ".jpeg"))], key=lambda x: int(os.path.splitext(x)[0]))
 
-crop_images_to_template(input_folder, template_path, output_folder)
+    for filename in image_files:
+        slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+        img_path = os.path.join(image_folder, filename)
+        slide.shapes.add_picture(img_path, Inches(0), Inches(0), width=Inches(10), height=Inches(7.5))
+
+    presentation.save(output_ppt)
+    print("PPT已保存至:", output_ppt)
+
+def main(video_path, output_ppt):
+    output_folder = "frames"
+    largest_images_folder = "largest-images"
+    cropped_folder = "Cropped-frames"
+    largest_image_path = "output_largest_image.jpg"
+
+    extract_frames(video_path, output_folder)
+    find_similar_images_and_rename(output_folder, threshold=5)
+    process_images_in_folder(output_folder, largest_images_folder)
+    find_largest_image(largest_images_folder, largest_image_path)
+    crop_images_to_template(output_folder, largest_image_path, cropped_folder)
+    images_to_ppt(cropped_folder, output_ppt)
+
+    print("完成！")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="从视频中提取帧，裁剪并生成PPT")
+    parser.add_argument("video_path", type=str, help="输入视频的路径")
+    parser.add_argument("output_ppt", type=str, help="输出PPT的路径")
+
+    args = parser.parse_args()
+    main(args.video_path, args.output_ppt)
